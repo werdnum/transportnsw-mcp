@@ -1,27 +1,20 @@
 [project]
-name = "transportnsw-trip-planner-mcp"
+name = "transportnsw-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP server for Transport NSW API"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "certifi>=14.5.14",
-    "coverage>=4.0.3",
-    "dotenv>=0.9.9",
     "fastmcp>=0.4.1",
-    "nose>=1.3.7",
-    "pluggy>=0.3.1",
-    "py>=1.4.31",
-    "pytest-cov>=6.0.0",
-    "pytest>=8.3.5",
-    "python-dateutil>=2.5.3",
-    "randomize>=0.13",
-    "setuptools>=21.0.0",
-    "six>=1.10",
-    "urllib3>=1.15.1",
     "mcp[cli]>=1.4.1",
+    "python-dateutil>=2.5.3",
+    "python-dotenv>=1.0.0",
     "requests>=2.32.3",
 ]
 
-[tool.uv.sources]
+[project.scripts]
+transportnsw-mcp = "api:mcp.run"
+
+[tool.setuptools]
+py-modules = ["api"]

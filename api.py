@@ -331,3 +331,7 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
     except Exception as e:
         print(f"Exception when calling Transport NSW API: {e}\n")
         return None
+
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
