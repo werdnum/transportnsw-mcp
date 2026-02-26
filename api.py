@@ -333,5 +333,252 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
         return None
 
 
+@mcp.tool()
+def plan_trip(
+    origin,
+    destination,
+    origin_type='any',
+    destination_type='any',
+    date=None,
+    time=None,
+    dep_arr='dep',
+    exclude_modes=None,
+    num_trips=5,
+    wheelchair_accessible=False
+):
+    """
+    Plan a trip between two locations using Transport NSW Trip Planner.
+
+    Args:
+        origin (str): Origin location - a stop ID, name, or coordinates (e.g. '200060' for Central Station, or 'Central Station')
+        destination (str): Destination location - a stop ID, name, or coordinates
+        origin_type (str): Type of origin location. Options: 'any', 'coord', 'poi', 'stop', 'platform', 'street', 'locality', 'suburb'. Default 'any'.
+        destination_type (str): Type of destination location. Same options as origin_type. Default 'any'.
+        date (str, optional): Date in DD-MM-YYYY format. Defaults to today.
+        time (str, optional): Time in HH:MM format (24-hour). Defaults to now.
+        dep_arr (str): 'dep' to depart at the given time, 'arr' to arrive by the given time. Default 'dep'.
+        exclude_modes (list[int], optional): Transport modes to exclude. Options:
+            1: Train
+            2: Metro
+            4: Light Rail
+            5: Bus
+            7: Coach
+            9: Ferry
+            11: School Bus
+        num_trips (int): Number of trip options to return. Default 5.
+        wheelchair_accessible (bool): If True, only return wheelchair-accessible routes. Default False.
+
+    Returns:
+        list: Simplified list of journey options with legs, times, and transport details.
+    """
+    import requests
+    from datetime import datetime as dt
+
+    API_ENDPOINT = 'https://api.transport.nsw.gov.au/v1/tp/trip'
+
+    now = dt.now()
+
+    # Format date as YYYYMMDD for the API
+    if date is None:
+        itd_date = now.strftime('%Y%m%d')
+    else:
+        day, month, year = date.split('-')
+        itd_date = f"{year}{month}{day}"
+
+    # Format time as HHMM for the API
+    if time is None:
+        itd_time = now.strftime('%H%M')
+    else:
+        itd_time = time.replace(':', '')
+
+    params = {
+        'outputFormat': output_format,
+        'coordOutputFormat': coord_output_format,
+        'version': api_version,
+        'type_origin': origin_type,
+        'name_origin': origin,
+        'type_destination': destination_type,
+        'name_destination': destination,
+        'itdDate': itd_date,
+        'itdTime': itd_time,
+        'itdTripDateTimeDepArr': dep_arr,
+        'calcNumberOfTrips': num_trips,
+        'TfNSWTR': 'true',
+    }
+
+    if exclude_modes:
+        params['excludedMeans'] = 1  # enable exclusion mode
+        for mode in exclude_modes:
+            # The API accepts multiple exclMOT_ params
+            params[f'exclMOT_{mode}'] = 1
+
+    if wheelchair_accessible:
+        params['wheelchair'] = 'on'
+
+    headers = {
+        'Authorization': f'apikey {API_KEY}'
+    }
+
+    try:
+        response = requests.get(API_ENDPOINT, params=params, headers=headers)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            # Check for API errors
+            if 'error' in data and data['error']:
+                return {'error': data['error'].get('message', 'Unknown API error')}
+
+            # Check for system messages (e.g. ambiguous origins)
+            if 'systemMessages' in data and data['systemMessages']:
+                msgs = data['systemMessages']
+                if isinstance(msgs, list):
+                    messages = [m.get('error', m.get('text', str(m))) for m in msgs]
+                elif isinstance(msgs, dict) and 'responseMessages' in msgs:
+                    messages = [m.get('error', m.get('text', str(m))) for m in msgs['responseMessages']]
+                else:
+                    messages = [str(msgs)]
+                return {'system_messages': messages}
+
+            journeys = data.get('journeys', [])
+            if not journeys:
+                return {'message': 'No journeys found for the given criteria.'}
+
+            return _format_journeys(journeys)
+        else:
+            print(f"Request failed with status code: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Exception when calling Transport NSW Trip Planner API: {e}\n")
+        return None
+
+
+def _format_journeys(journeys):
+    """Format raw journey data into concise, LLM-friendly output."""
+    from datetime import datetime as dt, timezone
+
+    results = []
+    for journey in journeys:
+        legs = journey.get('legs', [])
+        if not legs:
+            continue
+
+        formatted_legs = []
+        for leg in legs:
+            origin = leg.get('origin', {})
+            dest = leg.get('destination', {})
+            transport = leg.get('transportation', {})
+            product = transport.get('product', {})
+
+            # Determine if this is a walking/transfer leg or a transit leg
+            mode_name = product.get('name', '')
+            product_class = product.get('class')
+            is_walking = (product_class is not None and product_class >= 99) or mode_name.lower() in ('walking', 'footpath', '')
+
+            formatted_leg = {
+                'origin': origin.get('name', ''),
+                'departure_planned': _format_api_time(origin.get('departureTimePlanned')),
+                'destination': dest.get('name', ''),
+                'arrival_planned': _format_api_time(dest.get('arrivalTimePlanned')),
+                'duration_minutes': round(leg.get('duration', 0) / 60),
+            }
+
+            # Add real-time estimates if available
+            dep_est = origin.get('departureTimeEstimated')
+            arr_est = dest.get('arrivalTimeEstimated')
+            if dep_est:
+                formatted_leg['departure_estimated'] = _format_api_time(dep_est)
+            if arr_est:
+                formatted_leg['arrival_estimated'] = _format_api_time(arr_est)
+
+            if is_walking:
+                formatted_leg['mode'] = 'Walking'
+                distance = leg.get('distance', 0)
+                if distance:
+                    formatted_leg['distance_metres'] = distance
+            else:
+                formatted_leg['mode'] = mode_name
+                if transport.get('number'):
+                    formatted_leg['line'] = transport['number']
+                if transport.get('destination', {}).get('name'):
+                    formatted_leg['towards'] = transport['destination']['name']
+                if transport.get('operator', {}).get('name'):
+                    formatted_leg['operator'] = transport['operator']['name']
+
+                # Include real-time status
+                if leg.get('isRealtimeControlled'):
+                    formatted_leg['realtime'] = True
+
+                # Include stop count from stopSequence
+                stop_seq = leg.get('stopSequence', [])
+                if len(stop_seq) > 2:
+                    formatted_leg['num_stops'] = len(stop_seq) - 1
+
+            # Include any alerts on this leg (simplified)
+            infos = leg.get('infos', [])
+            if infos:
+                alerts = []
+                for info in infos:
+                    subtitle = info.get('subtitle', '')
+                    # Strip HTML tags for cleaner output
+                    import re
+                    clean = re.sub(r'<[^>]+>', '', subtitle).strip() if subtitle else ''
+                    if clean:
+                        alerts.append(clean)
+                if alerts:
+                    formatted_leg['alerts'] = alerts[:3]  # Limit to 3 most relevant
+
+            formatted_legs.append(formatted_leg)
+
+        # Build journey summary
+        first_dep = legs[0].get('origin', {}).get('departureTimePlanned')
+        last_arr = legs[-1].get('destination', {}).get('arrivalTimePlanned')
+
+        journey_summary = {
+            'legs': formatted_legs,
+        }
+
+        # Calculate total duration
+        if first_dep and last_arr:
+            try:
+                dep_dt = _parse_api_time(first_dep)
+                arr_dt = _parse_api_time(last_arr)
+                if dep_dt and arr_dt:
+                    total_minutes = round((arr_dt - dep_dt).total_seconds() / 60)
+                    journey_summary['total_duration_minutes'] = total_minutes
+                    journey_summary['depart'] = _format_api_time(first_dep)
+                    journey_summary['arrive'] = _format_api_time(last_arr)
+            except Exception:
+                pass
+
+        results.append(journey_summary)
+
+    return results
+
+
+def _parse_api_time(time_str):
+    """Parse an API time string (ISO 8601 with Z suffix) into a timezone-aware datetime."""
+    from datetime import datetime as dt, timezone
+    if not time_str:
+        return None
+    try:
+        clean = time_str.split('.')[0]
+        if clean.endswith('Z'):
+            clean = clean[:-1]
+        parsed = dt.strptime(clean, "%Y-%m-%dT%H:%M:%S")
+        return parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _format_api_time(time_str):
+    """Convert an API UTC time string to a readable local time string."""
+    parsed = _parse_api_time(time_str)
+    if not parsed:
+        return time_str or ''
+    local_time = parsed.astimezone()
+    return local_time.strftime('%Y-%m-%d %H:%M')
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

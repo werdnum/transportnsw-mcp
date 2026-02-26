@@ -6,7 +6,7 @@ from datetime import datetime
 
 # Add the parent directory to path so we can import the api module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from api import find_transport_stops, get_transport_alerts, get_departure_monitor, output_format, coord_output_format, incl_filter, api_version
+from api import find_transport_stops, get_transport_alerts, get_departure_monitor, plan_trip, output_format, coord_output_format, incl_filter, api_version
 
 # Test coordinates (Central Station, Sydney)
 CENTRAL_STATION_COORD = '151.206290:-33.884080:EPSG:4326'
@@ -226,6 +226,115 @@ class TestDepartureMonitor:
         # API should respond within a reasonable time (5 seconds)
         assert elapsed < 5, f"API response took too long: {elapsed:.2f} seconds"
         assert departures is not None
+
+
+class TestTripPlanner:
+    """Test suite for Transport NSW Trip Planner API functionality."""
+
+    CENTRAL_STATION_ID = "200060"
+    TOWN_HALL_STATION_ID = "200070"
+
+    def test_basic_trip(self):
+        """Test basic trip planning between two stops."""
+        trips = plan_trip(
+            origin=self.CENTRAL_STATION_ID,
+            destination=self.TOWN_HALL_STATION_ID,
+            origin_type='stop',
+            destination_type='stop',
+            num_trips=3,
+        )
+        assert trips is not None
+        assert isinstance(trips, list), "Response should be a list of journeys"
+        assert len(trips) > 0, "Should return at least one journey"
+
+        # Verify journey structure
+        journey = trips[0]
+        assert 'legs' in journey, "Journey should have legs"
+        assert len(journey['legs']) > 0, "Journey should have at least one leg"
+        assert 'total_duration_minutes' in journey, "Journey should have total duration"
+
+    def test_trip_leg_structure(self):
+        """Test that trip legs contain expected fields."""
+        trips = plan_trip(
+            origin=self.CENTRAL_STATION_ID,
+            destination=self.TOWN_HALL_STATION_ID,
+            origin_type='stop',
+            destination_type='stop',
+            num_trips=1,
+        )
+        assert trips is not None
+        assert len(trips) > 0
+
+        leg = trips[0]['legs'][0]
+        assert 'origin' in leg, "Leg should have origin"
+        assert 'destination' in leg, "Leg should have destination"
+        assert 'departure_planned' in leg, "Leg should have planned departure"
+        assert 'arrival_planned' in leg, "Leg should have planned arrival"
+        assert 'mode' in leg, "Leg should have mode"
+        assert 'duration_minutes' in leg, "Leg should have duration"
+
+    def test_trip_with_date_and_time(self):
+        """Test trip planning with specific date and time."""
+        trips = plan_trip(
+            origin=self.CENTRAL_STATION_ID,
+            destination=self.TOWN_HALL_STATION_ID,
+            origin_type='stop',
+            destination_type='stop',
+            time='09:00',
+        )
+        assert trips is not None
+        assert isinstance(trips, list)
+
+    def test_trip_arrive_by(self):
+        """Test trip planning with arrival time constraint."""
+        trips = plan_trip(
+            origin=self.CENTRAL_STATION_ID,
+            destination=self.TOWN_HALL_STATION_ID,
+            origin_type='stop',
+            destination_type='stop',
+            time='18:00',
+            dep_arr='arr',
+        )
+        assert trips is not None
+        assert isinstance(trips, list)
+
+    def test_trip_by_name(self):
+        """Test trip planning using location names instead of stop IDs."""
+        trips = plan_trip(
+            origin='Central Station, Sydney',
+            destination='Town Hall Station, Sydney',
+            num_trips=1,
+        )
+        assert trips is not None
+        # The API may return journeys (list) or system_messages (dict) if names are ambiguous
+        assert isinstance(trips, (list, dict)), "Response should be a list of journeys or a dict with system messages"
+
+    def test_trip_exclude_modes(self):
+        """Test trip planning with excluded transport modes."""
+        trips = plan_trip(
+            origin=self.CENTRAL_STATION_ID,
+            destination=self.TOWN_HALL_STATION_ID,
+            origin_type='stop',
+            destination_type='stop',
+            exclude_modes=[5, 7],  # Exclude bus and coach
+        )
+        assert trips is not None
+        assert isinstance(trips, list)
+
+    def test_trip_response_time(self):
+        """Test trip planner API response time."""
+        start_time = time.time()
+        trips = plan_trip(
+            origin=self.CENTRAL_STATION_ID,
+            destination=self.TOWN_HALL_STATION_ID,
+            origin_type='stop',
+            destination_type='stop',
+            num_trips=1,
+        )
+        elapsed = time.time() - start_time
+
+        assert elapsed < 10, f"API response took too long: {elapsed:.2f} seconds"
+        assert trips is not None
 
 
 if __name__ == "__main__":
