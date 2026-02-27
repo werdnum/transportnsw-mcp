@@ -429,22 +429,29 @@ def plan_trip(
             if 'error' in data and data['error']:
                 return {'error': data['error'].get('message', 'Unknown API error')}
 
-            # Check for system messages (e.g. ambiguous origins)
+            journeys = data.get('journeys', [])
+
+            # Extract system messages if present
+            system_messages = None
             if 'systemMessages' in data and data['systemMessages']:
                 msgs = data['systemMessages']
                 if isinstance(msgs, list):
-                    messages = [m.get('error', m.get('text', str(m))) for m in msgs]
-                elif isinstance(msgs, dict) and 'responseMessages' in msgs:
-                    messages = [m.get('error', m.get('text', str(m))) for m in msgs['responseMessages']]
+                    system_messages = [m.get('text', str(m)) for m in msgs]
                 else:
-                    messages = [str(msgs)]
-                return {'system_messages': messages}
+                    system_messages = [str(msgs)]
 
-            journeys = data.get('journeys', [])
             if not journeys:
+                if system_messages:
+                    return {'system_messages': system_messages}
                 return {'message': 'No journeys found for the given criteria.'}
 
-            return _format_journeys(journeys)
+            result = _format_journeys(journeys)
+
+            # Include system messages alongside journeys if present
+            if system_messages and isinstance(result, list):
+                return {'system_messages': system_messages, 'journeys': result}
+
+            return result
         else:
             print(f"Request failed with status code: {response.status_code}")
             return None
