@@ -350,9 +350,12 @@ def plan_trip(
     Plan a trip between two locations using Transport NSW Trip Planner.
 
     Args:
-        origin (str): Origin location - a stop ID, name, or coordinates (e.g. '200060' for Central Station, or 'Central Station')
-        destination (str): Destination location - a stop ID, name, or coordinates
-        origin_type (str): Type of origin location. Options: 'any', 'coord', 'poi', 'stop', 'platform', 'street', 'locality', 'suburb'. Default 'any'.
+        origin (str): Origin location - a stop name, stop ID, address, or coordinates in 'LONGITUDE:LATITUDE:EPSG:4326' format.
+            Names are automatically resolved (e.g. 'Redfern Station', 'Bondi Beach', 'Sydney Opera House').
+            Stop IDs also work (e.g. '200060' for Central Station).
+        destination (str): Destination location - same formats as origin.
+        origin_type (str): Type of origin location. Options: 'any', 'coord', 'stop'. Default 'any'.
+            Use 'coord' when passing coordinates, 'stop' when passing a stop ID. 'any' auto-resolves names.
         destination_type (str): Type of destination location. Same options as origin_type. Default 'any'.
         date (str, optional): Date in DD-MM-YYYY format. Defaults to today.
         time (str, optional): Time in HH:MM format (24-hour). Defaults to now.
@@ -371,6 +374,103 @@ def plan_trip(
     Returns:
         list: Simplified list of journey options with legs, times, and transport details.
     """
+    import requests
+    from datetime import datetime as dt
+
+    # Auto-resolve names to stop IDs when type is 'any' and the value
+    # doesn't look like a stop ID (numeric) or coordinates (contains ':')
+    resolved_origin = origin
+    resolved_origin_type = origin_type
+    resolved_destination = destination
+    resolved_destination_type = destination_type
+
+    if origin_type == 'any' and not _looks_like_id_or_coord(origin):
+        resolved = _resolve_stop_name(origin)
+        if resolved:
+            resolved_origin = resolved['id']
+            resolved_origin_type = 'any'
+
+    if destination_type == 'any' and not _looks_like_id_or_coord(destination):
+        resolved = _resolve_stop_name(destination)
+        if resolved:
+            resolved_destination = resolved['id']
+            resolved_destination_type = 'any'
+
+    return _execute_trip_request(
+        origin=resolved_origin,
+        origin_type=resolved_origin_type,
+        destination=resolved_destination,
+        destination_type=resolved_destination_type,
+        date=date,
+        time=time,
+        dep_arr=dep_arr,
+        exclude_modes=exclude_modes,
+        num_trips=num_trips,
+        wheelchair_accessible=wheelchair_accessible,
+    )
+
+
+def _looks_like_id_or_coord(value):
+    """Check if a value looks like a stop ID (numeric) or coordinates (contains EPSG)."""
+    if value.isdigit():
+        return True
+    if 'EPSG' in value or ':' in value:
+        return True
+    return False
+
+
+def _resolve_stop_name(name):
+    """Resolve a location name to its best-matching stop using the stop_finder API."""
+    import requests
+
+    params = {
+        'outputFormat': output_format,
+        'coordOutputFormat': coord_output_format,
+        'version': api_version,
+        'type_sf': 'any',
+        'name_sf': name,
+        'TfNSWSF': 'true',
+    }
+    headers = {
+        'Authorization': f'apikey {API_KEY}'
+    }
+
+    try:
+        response = requests.get(
+            'https://api.transport.nsw.gov.au/v1/tp/stop_finder',
+            params=params, headers=headers
+        )
+        if response.status_code == 200:
+            data = response.json()
+            locations = data.get('locations', [])
+            if not locations:
+                return None
+
+            # Use isBest flag if the API marked a clear winner
+            for loc in locations:
+                if loc.get('isBest'):
+                    return loc
+
+            # Prefer stops/platforms (sorted by match quality) over streets/POIs
+            stops = [loc for loc in locations if loc.get('type') in ('stop', 'platform')]
+            if stops:
+                stops.sort(key=lambda x: x.get('matchQuality', 0), reverse=True)
+                return stops[0]
+
+            # Fall back to highest match quality result
+            locations.sort(key=lambda x: x.get('matchQuality', 0), reverse=True)
+            return locations[0]
+    except Exception as e:
+        print(f"Exception resolving stop name '{name}': {e}")
+
+    return None
+
+
+def _execute_trip_request(
+    origin, origin_type, destination, destination_type,
+    date, time, dep_arr, exclude_modes, num_trips, wheelchair_accessible
+):
+    """Execute the actual trip planner API request."""
     import requests
     from datetime import datetime as dt
 
@@ -409,7 +509,6 @@ def plan_trip(
     if exclude_modes:
         params['excludedMeans'] = 1  # enable exclusion mode
         for mode in exclude_modes:
-            # The API accepts multiple exclMOT_ params
             params[f'exclMOT_{mode}'] = 1
 
     if wheelchair_accessible:
@@ -429,22 +528,29 @@ def plan_trip(
             if 'error' in data and data['error']:
                 return {'error': data['error'].get('message', 'Unknown API error')}
 
-            # Check for system messages (e.g. ambiguous origins)
+            journeys = data.get('journeys', [])
+
+            # Extract system messages if present
+            system_messages = None
             if 'systemMessages' in data and data['systemMessages']:
                 msgs = data['systemMessages']
                 if isinstance(msgs, list):
-                    messages = [m.get('error', m.get('text', str(m))) for m in msgs]
-                elif isinstance(msgs, dict) and 'responseMessages' in msgs:
-                    messages = [m.get('error', m.get('text', str(m))) for m in msgs['responseMessages']]
+                    system_messages = [m.get('text', str(m)) for m in msgs]
                 else:
-                    messages = [str(msgs)]
-                return {'system_messages': messages}
+                    system_messages = [str(msgs)]
 
-            journeys = data.get('journeys', [])
             if not journeys:
+                if system_messages:
+                    return {'system_messages': system_messages}
                 return {'message': 'No journeys found for the given criteria.'}
 
-            return _format_journeys(journeys)
+            result = _format_journeys(journeys)
+
+            # Include system messages alongside journeys if present
+            if system_messages and isinstance(result, list):
+                return {'system_messages': system_messages, 'journeys': result}
+
+            return result
         else:
             print(f"Request failed with status code: {response.status_code}")
             return None

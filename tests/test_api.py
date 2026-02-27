@@ -228,6 +228,15 @@ class TestDepartureMonitor:
         assert departures is not None
 
 
+def _get_journeys(result):
+    """Extract journeys list from plan_trip result (may be a list or dict with 'journeys' key)."""
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict) and 'journeys' in result:
+        return result['journeys']
+    return result
+
+
 class TestTripPlanner:
     """Test suite for Transport NSW Trip Planner API functionality."""
 
@@ -236,14 +245,15 @@ class TestTripPlanner:
 
     def test_basic_trip(self):
         """Test basic trip planning between two stops."""
-        trips = plan_trip(
+        result = plan_trip(
             origin=self.CENTRAL_STATION_ID,
             destination=self.TOWN_HALL_STATION_ID,
             origin_type='stop',
             destination_type='stop',
             num_trips=3,
         )
-        assert trips is not None
+        assert result is not None
+        trips = _get_journeys(result)
         assert isinstance(trips, list), "Response should be a list of journeys"
         assert len(trips) > 0, "Should return at least one journey"
 
@@ -255,14 +265,15 @@ class TestTripPlanner:
 
     def test_trip_leg_structure(self):
         """Test that trip legs contain expected fields."""
-        trips = plan_trip(
+        result = plan_trip(
             origin=self.CENTRAL_STATION_ID,
             destination=self.TOWN_HALL_STATION_ID,
             origin_type='stop',
             destination_type='stop',
             num_trips=1,
         )
-        assert trips is not None
+        assert result is not None
+        trips = _get_journeys(result)
         assert len(trips) > 0
 
         leg = trips[0]['legs'][0]
