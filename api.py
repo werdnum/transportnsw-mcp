@@ -34,10 +34,12 @@ def find_transport_stops(location_coord, stop_type='BUS_POINT', radius=100):
         API response with transport stops
     """
     import requests
-    
+
+    radius = int(radius)
+
     # API endpoint
     API_ENDPOINT = 'https://api.transport.nsw.gov.au/v1/tp/coord'
-    
+
     # Set up the request parameters
     params = {
         'outputFormat': output_format,
@@ -167,10 +169,14 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
     """
     import requests
     from datetime import datetime, timezone, timedelta
-    
+
+    max_results = int(max_results)
+    if mot_type is not None:
+        mot_type = int(mot_type)
+
     # API endpoint
     API_ENDPOINT = 'https://api.transport.nsw.gov.au/v1/tp/departure_mon'
-    
+
     # Set default date and time to now if not provided
     now = datetime.now()
     
@@ -473,6 +479,10 @@ def _execute_trip_request(
     """Execute the actual trip planner API request."""
     import requests
     from datetime import datetime as dt
+
+    num_trips = int(num_trips)
+    if exclude_modes is not None:
+        exclude_modes = [int(m) for m in exclude_modes]
 
     API_ENDPOINT = 'https://api.transport.nsw.gov.au/v1/tp/trip'
 
