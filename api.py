@@ -3,10 +3,16 @@ from dotenv import load_dotenv
 import os
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # Load environment variables
 load_dotenv()
 API_KEY = os.getenv('OPEN_TRANSPORT_API_KEY')
+
+# Transport NSW operates in Sydney, so "local time" always means Sydney time,
+# regardless of the timezone the MCP server process happens to run in (e.g.
+# a UTC container). Never rely on datetime.now()/.astimezone() with no tz arg.
+SYDNEY_TZ = ZoneInfo("Australia/Sydney")
 
 # Define common parameters for API requests
 output_format = 'rapidJSON'  # Required for JSON output
@@ -99,7 +105,7 @@ def get_transport_alerts(date=None, mot_type=None, stop_id=None, line_number=Non
     
     # Set default date to today if not provided
     if date is None:
-        date = datetime.now().strftime('%d-%m-%Y')
+        date = datetime.now(SYDNEY_TZ).strftime('%d-%m-%Y')
     
     # Set up the request parameters
     params = {
@@ -178,7 +184,7 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
     API_ENDPOINT = 'https://api.transport.nsw.gov.au/v1/tp/departure_mon'
 
     # Set default date and time to now if not provided
-    now = datetime.now()
+    now = datetime.now(SYDNEY_TZ)
     
     # Format date as YYYYMMDD for the API
     if date is None:
@@ -202,10 +208,8 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
         hour = int(time_parts[0])
         minute = int(time_parts[1]) if len(time_parts) > 1 else 0
         # Create a datetime object with today's date and the specified time
-        # Make it timezone-aware to match the converted API times
-        target_time = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
-        # Add timezone info to make it comparable with timezone-aware datetimes
-        target_time = target_time.astimezone()
+        # in Sydney local time, to match the converted API times
+        target_time = datetime.now(SYDNEY_TZ).replace(hour=hour, minute=minute, second=0, microsecond=0)
     
     # Always request more results than needed to ensure we have enough for filtering
     # Set up the request parameters exactly as in the documentation
@@ -254,7 +258,7 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
             processed_stops = []
             
             # Get current date and time for filtering
-            now_local = datetime.now()
+            now_local = datetime.now(SYDNEY_TZ)
             today_date = now_local.strftime('%Y-%m-%d')
             
             # Convert all departure times to datetime objects for easier processing
@@ -274,8 +278,8 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
                     departure_dt_utc = datetime.strptime(clean_time, "%Y-%m-%dT%H:%M:%S")
                     departure_dt_utc = departure_dt_utc.replace(tzinfo=timezone.utc)
                     
-                    # Convert to local time for easier comparison
-                    departure_dt_local = departure_dt_utc.astimezone()
+                    # Convert to Sydney local time for easier comparison
+                    departure_dt_local = departure_dt_utc.astimezone(SYDNEY_TZ)
                     
                     # Add the parsed datetime to the stop for easier sorting
                     stop['departure_dt_local'] = departure_dt_local
@@ -313,7 +317,7 @@ def get_departure_monitor(stop_id, date=None, time=None, mot_type=None, max_resu
             concise_stops = []
             for stop in processed_stops:
                 # Format local time for better readability
-                local_time = stop['departure_dt_local'].strftime('%Y-%m-%d %H:%M:%S')
+                local_time = stop['departure_dt_local'].strftime('%Y-%m-%d %H:%M:%S %Z')
                 
                 # Extract only the essential information
                 concise_stop = {
@@ -486,7 +490,7 @@ def _execute_trip_request(
 
     API_ENDPOINT = 'https://api.transport.nsw.gov.au/v1/tp/trip'
 
-    now = dt.now()
+    now = dt.now(SYDNEY_TZ)
 
     # Format date as YYYYMMDD for the API
     if date is None:
@@ -688,12 +692,12 @@ def _parse_api_time(time_str):
 
 
 def _format_api_time(time_str):
-    """Convert an API UTC time string to a readable local time string."""
+    """Convert an API UTC time string to a readable Sydney local time string."""
     parsed = _parse_api_time(time_str)
     if not parsed:
         return time_str or ''
-    local_time = parsed.astimezone()
-    return local_time.strftime('%Y-%m-%d %H:%M')
+    local_time = parsed.astimezone(SYDNEY_TZ)
+    return local_time.strftime('%Y-%m-%d %H:%M %Z')
 
 
 if __name__ == "__main__":
