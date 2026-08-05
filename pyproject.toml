@@ -18,3 +18,8 @@ transportnsw-mcp = "api:mcp.run"
 
 [tool.setuptools]
 py-modules = ["api"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

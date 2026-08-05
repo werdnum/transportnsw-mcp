@@ -3,10 +3,11 @@ import time
 import sys
 import os
 from datetime import datetime
+from unittest.mock import patch, MagicMock
 
 # Add the parent directory to path so we can import the api module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from api import find_transport_stops, get_transport_alerts, get_departure_monitor, plan_trip, output_format, coord_output_format, incl_filter, api_version
+from api import find_transport_stops, get_transport_alerts, get_departure_monitor, plan_trip, output_format, coord_output_format, incl_filter, api_version, _format_api_time, _parse_api_time
 
 # Test coordinates (Central Station, Sydney)
 CENTRAL_STATION_COORD = '151.206290:-33.884080:EPSG:4326'
@@ -346,6 +347,59 @@ class TestTripPlanner:
 
         assert elapsed < 10, f"API response took too long: {elapsed:.2f} seconds"
         assert trips is not None
+
+
+class TestTimezoneConversion:
+    """Regression tests for the UTC -> Sydney local time conversion bug.
+
+    These are pure unit tests with no network calls, and must pass
+    regardless of the timezone the test runner's host is set to (e.g. a
+    UTC CI container), since the whole point is that "local" always means
+    Australia/Sydney, not the host's timezone.
+    """
+
+    def test_format_api_time_converts_utc_to_sydney(self):
+        # 06:32 UTC on 4 Aug 2026 (AEST, UTC+10) should become 16:32 local.
+        assert _format_api_time("2026-08-04T06:32:00Z") == "2026-08-04 16:32 AEST"
+
+    def test_format_api_time_handles_daylight_saving(self):
+        # 06:32 UTC in January is AEDT (UTC+11).
+        assert _format_api_time("2026-01-04T06:32:00Z") == "2026-01-04 17:32 AEDT"
+
+    def test_parse_api_time_is_utc_aware(self):
+        parsed = _parse_api_time("2026-08-04T06:32:00Z")
+        assert parsed.utcoffset().total_seconds() == 0
+
+    def test_get_departure_monitor_local_time_is_shifted_from_utc(self):
+        """local_departure_time must not just be the UTC value with the Z stripped."""
+        # Use a departure date far in the future so it always passes the
+        # "today or later" filter, without needing to freeze the clock.
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'stopEvents': [
+                {
+                    'departureTimePlanned': '2030-01-04T06:32:00Z',
+                    'location': {'name': 'Test Stop'},
+                    'transportation': {
+                        'number': 'T1',
+                        'description': 'Test Line',
+                        'destination': {'name': 'Test Destination'},
+                        'operator': {'name': 'Test Operator'},
+                    },
+                    'properties': {},
+                }
+            ]
+        }
+
+        with patch('requests.get', return_value=mock_response):
+            departures = get_departure_monitor("200060")
+
+        assert departures
+        local_time = departures[0]['local_departure_time']
+        # 06:32 UTC in January is AEDT (UTC+11) -> 17:32 local.
+        assert local_time.startswith("2030-01-04 17:32:00")
+        assert local_time != "2030-01-04 06:32:00"
 
 
 if __name__ == "__main__":
