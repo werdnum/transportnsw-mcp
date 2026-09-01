@@ -404,3 +404,20 @@ class TestTimezoneConversion:
 
 if __name__ == "__main__":
     pytest.main(["-v", "test_api.py"])
+
+
+class TestMCPServer:
+    """Test MCP server initialization and protocol handling."""
+
+    def test_mcp_instance(self):
+        from api import mcp
+        assert mcp.name == "Transport NSW"
+
+    def test_mcp_tools_registered(self):
+        from api import mcp
+        # Check that FastMCP has registered tools
+        tool_names = [tool.name for tool in mcp._tool_manager.list_tools()]
+        assert "find_transport_stops" in tool_names
+        assert "get_transport_alerts" in tool_names
+        assert "get_departure_monitor" in tool_names
+        assert "plan_trip" in tool_names
