@@ -700,5 +700,9 @@ def _format_api_time(time_str):
     return local_time.strftime('%Y-%m-%d %H:%M %Z')
 
 
-if __name__ == "__main__":
+def main():
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
